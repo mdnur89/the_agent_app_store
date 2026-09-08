@@ -1,3 +1,12 @@
+"""Canonical home for user persistence.
+
+These functions used to be duplicated verbatim between this module and a
+monolithic `db/crud.py`; `core/` imported the monolith while `api/` imported
+these, so the two copies sat one edit away from silently diverging on
+whichever call path you did not happen to test. The monolith was deleted and
+every importer repointed here -- keep new user queries in this file so there
+is exactly one definition to change.
+"""
 from typing import List, Optional
 from prisma.models import User
 from db.client import db

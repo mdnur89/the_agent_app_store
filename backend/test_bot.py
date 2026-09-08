@@ -21,7 +21,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    request = HTTPXRequest(httpx_kwargs={"verify": False})
+    # Was verify=False. Kept verifying here too: this scratch script is the
+    # thing people copy when debugging the bot, so leaving the insecure flag
+    # in it is how it grows back into transports/telegram/transport.py.
+    request = HTTPXRequest(httpx_kwargs={"verify": certifi.where()})
     application = ApplicationBuilder().token(token).request(request).build()
     application.add_handler(CommandHandler("start", start))
     

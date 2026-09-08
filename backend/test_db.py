@@ -1,6 +1,6 @@
 import asyncio
 from db.client import db
-from db.crud import get_or_create_user
+from db.users.crud import get_or_create_user
 
 async def main():
     await db.connect()

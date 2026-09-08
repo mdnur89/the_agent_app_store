@@ -1,7 +1,12 @@
 import os
 import certifi
 
-# Fix for Windows SSL Certificate Verification Error
+# Point the stdlib/OpenSSL trust store at certifi's CA bundle before any TLS
+# client is constructed -- these are read at import time by libraries further
+# down, so they must be set before those imports below, hence the unusual
+# placement above them. This is the supported fix for the "certificate verify
+# failed" errors seen on Windows, where there is no reliable system CA path;
+# see start_telegram_bot() for why that matters more than it looks.
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["SSL_CERT_DIR"] = certifi.where()
 
@@ -9,7 +14,9 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
 
-from db.crud import get_or_create_user, get_active_agents, switch_user_agent
+from db.users.crud import get_or_create_user
+from db.agents.crud import get_active_agents
+from db.sessions.crud import switch_user_agent
 from db.client import db
 from core.router import MessageRouter
 
@@ -70,8 +77,30 @@ async def start_telegram_bot():
         return
         
     from telegram.request import HTTPXRequest
-    # Disable SSL verification for local dev to bypass Windows cert/proxy issues
-    request = HTTPXRequest(httpx_kwargs={"verify": False})
+
+    # This previously passed verify=False unconditionally, to get past SSL
+    # failures on the original author's Windows machine. That flag does not
+    # stay on a laptop: the same code path runs in production on Render, where
+    # it disabled certificate verification for every Telegram API call --
+    # including the ones carrying TELEGRAM_BOT_TOKEN -- leaving the bot open to
+    # anyone able to intercept the connection and present their own cert.
+    #
+    # Pointing httpx at certifi's CA bundle is the actual fix for those Windows
+    # failures (a missing/stale system trust store), so the escape hatch is not
+    # needed in the common case. It is kept for genuinely broken local setups,
+    # e.g. a corporate MITM proxy, but is now opt-in via env var and logs a
+    # warning -- the old version failed open in silence, which is why it
+    # survived all the way into a deployed service unnoticed.
+    if os.getenv("TELEGRAM_INSECURE_SSL", "").lower() in ("1", "true", "yes"):
+        logger.warning(
+            "TELEGRAM_INSECURE_SSL is set: TLS certificate verification is DISABLED. "
+            "Never use this outside local development."
+        )
+        verify = False
+    else:
+        verify = certifi.where()
+
+    request = HTTPXRequest(httpx_kwargs={"verify": verify})
     application = ApplicationBuilder().token(token).request(request).build()
 
     application.add_handler(CommandHandler("start", start))

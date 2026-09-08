@@ -1,3 +1,12 @@
+"""Canonical home for agent persistence.
+
+These functions used to be duplicated verbatim between this module and a
+monolithic `db/crud.py`; `core/` imported the monolith while `api/` imported
+these, so the two copies sat one edit away from silently diverging on
+whichever call path you did not happen to test. The monolith was deleted and
+every importer repointed here -- keep new agent queries in this file so there
+is exactly one definition to change.
+"""
 from typing import List, Optional, Dict, Any
 from prisma.models import Agent
 from db.client import db
@@ -30,3 +39,21 @@ async def update_agent(agent_id: str, data: Dict[str, Any]) -> Optional[Agent]:
 
 async def delete_agent(agent_id: str) -> Optional[Agent]:
     return await db.agent.delete(where={"id": agent_id})
+
+async def sync_core_agents(core_agents: List[dict]):
+    """Upsert the JSON-defined core agents into the DB on startup.
+
+    Moved here from the deleted `db/crud.py`. The `backend/agents/<category>/`
+    tree is the source of truth for system agents, so this runs on every boot
+    to reconcile the DB with what is on disk -- that is what lets a contributor
+    add an agent by committing one JSON file, with the directory name becoming
+    its category (see main.py startup). Upsert rather than insert because boots
+    are repeated; keyed on the id declared in the JSON, not a generated uuid,
+    so the same file maps to the same row across restarts and redeploys.
+    """
+    for agent_data in core_agents:
+        existing = await db.agent.find_unique(where={"id": agent_data["id"]})
+        if existing:
+            await db.agent.update(where={"id": agent_data["id"]}, data=agent_data)
+        else:
+            await db.agent.create(data=agent_data)

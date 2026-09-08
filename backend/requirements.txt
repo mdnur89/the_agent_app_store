@@ -1,3 +1,7 @@
+# Imported directly by the Telegram transport to supply a CA bundle for TLS
+# verification; was previously only present transitively via httpx, so a
+# resolver change could have broken the import.
+certifi
 pipecat-ai
 python-telegram-bot
 groq

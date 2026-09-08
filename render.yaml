@@ -5,6 +5,11 @@ services:
     rootDir: backend
     buildCommand: "pip install -r requirements.txt && prisma generate"
     startCommand: "prisma db push && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    # Gates the deploy on the database actually being reachable. /api/health
+    # probes it with SELECT 1 and returns 503 when it is not, so a bad
+    # DATABASE_URL now fails the rollout instead of going live as a service
+    # that answers 200 while every data route 500s.
+    healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
         sync: false
