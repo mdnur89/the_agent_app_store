@@ -2,8 +2,10 @@ import { Link } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import logo from '../assets/logo.svg'
 import './Landing.css'
+import { useAuth } from '../context/auth-state'
 
 export default function Landing() {
+  const { user } = useAuth()
   const [demoStep, setDemoStep] = useState(0)
 
   useEffect(() => {
@@ -25,7 +27,7 @@ export default function Landing() {
           <a href="#features">Features</a>
           <a href="#architecture">Architecture</a>
           <a href="https://github.com/TadiwanasheZvidzaRodney/the_agent_app_store" target="_blank" rel="noopener noreferrer" className="nav-github-link">GitHub</a>
-          <Link to="/dashboard" className="nav-cta">Go to Dashboard</Link>
+          <Link to={user ? '/dashboard' : '/login'} className="nav-cta">{user ? 'Go to Dashboard' : 'Sign in'}</Link>
         </div>
       </nav>
       
@@ -64,7 +66,7 @@ export default function Landing() {
           </div>
 
           <div className="hero-actions">
-            <Link to="/dashboard" className="primary-btn">
+            <Link to={user ? '/dashboard' : '/login'} className="primary-btn">
               Enter The Hub
             </Link>
             <a href="https://github.com/TadiwanasheZvidzaRodney/the_agent_app_store" target="_blank" rel="noopener noreferrer" className="secondary-btn github-btn">

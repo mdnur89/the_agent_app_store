@@ -1,0 +1,1 @@
+"""Local capability embedding service."""

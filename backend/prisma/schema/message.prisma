@@ -4,5 +4,5 @@ model Message {
   role       String
   content    String
   createdAt  DateTime @default(now())
-  session    Session  @relation(fields: [session_id], references: [id])
+  session    Session  @relation(fields: [session_id], references: [id], onDelete: Cascade)
 }

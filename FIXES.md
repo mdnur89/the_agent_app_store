@@ -1,289 +1,274 @@
-# Backend Fixes — Correctness, Consolidation & Deploy Safety
+# Engineering Record — Fork of `TadiwanasheZvidzaRodney/the_agent_app_store`
 
-**Base commit:** `08a6f9a`
-**Scope:** 14 files changed, +288 / −91, plus one new file (`backend/config.py`)
-**Status:** committed to `main`
+**Fork point:** `08a6f9a` · **Scope:** 60 files, +2463 / −541
 
-Five fixes to the FastAPI backend: two crash/500 bugs, one duplication hazard, one
-security defect, and one deploy-safety gap. No feature work, no behaviour changes to
-the agent swarm itself.
+Everything this fork changed, in one place. Two bodies of work:
+
+1. **Correctness, security and deploy safety** — five defects in the inherited code.
+2. **Finishing the three headline features** the README advertised but that were stubs:
+   semantic discovery, open delegation, and accounts/ownership. Plus voice.
 
 ---
 
-## 1. `process_web_message` violated its own return contract
+# Part 1 — Correctness, security & deploy safety
 
-**Severity:** bug — HTTP 500 on a routine input
+## 1.1 `process_web_message` violated its own return contract
+
+**HTTP 500 on routine input.**
 
 `MessageRouter.process_web_message` returns `(reply, session_id)` rather than a bare
 reply, because `transfer_to_agent` retires the current session and opens a new one —
-the caller cannot assume the session it passed in is the session that answered.
-
-One exit path returned a bare string instead:
+the caller cannot assume the session it passed in is the session that answered. One
+exit path returned a bare string:
 
 ```python
-# core/router.py — before
 if not session:
     return "Session not found."     # every other path returns a 2-tuple
 ```
 
-The chat route unpacks two values, so any request carrying a `session_id` the
-database no longer knows raised `ValueError` → **HTTP 500**. That is not an exotic
-input: a browser holds `session_id` in React state across a DB reset or a
-`prisma db push` that dropped rows.
+The chat route unpacks two values, so any request carrying a `session_id` the database
+no longer knows raised `ValueError` → **500**. Not exotic: a browser holds `session_id`
+in React state across a DB reset or a `prisma db push` that dropped rows.
 
-**Fix:** all exit paths now return a 2-tuple; the annotation says `-> tuple[str, str]`
-so a type checker catches the next regression. The unknown id is echoed back rather
-than replaced, because inventing a session would silently migrate the user onto a
-different conversation.
+All exit paths now return a 2-tuple, annotated `-> tuple[str, str]` so a type checker
+catches the next regression.
 
-### The guard that actually matters
+Fixing only the tuple would have turned the 500 into a **200 whose `reply` body was the
+literal string `"Session not found."`** — rendered in the transcript as if the agent had
+said it. So both ids are validated at the API boundary and return 404.
 
-Fixing only the tuple would have converted the 500 into a **200 whose `reply` body was
-the literal string `"Session not found."`** — rendered in the transcript as if the
-agent had said it. The user would see the bot apologising while the client never
-learns its state is stale.
+## 1.2 Two parallel CRUD layers, one edit from divergence
 
-So the ids are now validated at the API boundary (`api/agents/router.py`):
-
-```python
-if not await crud.get_agent(agent_id):
-    raise HTTPException(status_code=404, detail="Agent not found")
-
-if session_id:
-    if not await session_crud.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Session not found")
-```
-
-The router's fallback remains as defence in depth for future callers.
-
-**Files:** `core/router.py`, `api/agents/router.py`, `db/sessions/crud.py` (new `get_session`)
-
----
-
-## 2. Two parallel CRUD layers, one edit from divergence
-
-**Severity:** maintenance hazard
-
-The repo carried the same persistence functions twice:
-
-| Location | Imported by |
-| --- | --- |
-| `db/crud.py` (monolith, 62 lines) | `core/`, `main.py`, `transports/`, `test_db.py` |
-| `db/{users,agents,sessions,messages}/crud.py` | `api/` |
-
-`get_or_create_user`, `switch_user_agent`, `save_message`, `get_session_history` and
-`get_active_agents` existed verbatim in both. Because the two halves of the codebase
-imported *different copies*, an edit to one would silently diverge on whichever call
+`db/crud.py` (62 lines) duplicated `db/{users,agents,sessions,messages}/crud.py`
+verbatim — and the two halves of the codebase imported *different copies* (`core/` the
+monolith, `api/` the modules). An edit to one would silently diverge on whichever call
 path you did not happen to test.
 
-**Fix:** the monolith is deleted; the per-domain modules are canonical, matching the
-DDD layout the README already describes.
+Monolith deleted, per-domain modules canonical, all six importers repointed. Each module
+carries a docstring recording why it is the single home.
 
-- `get_active_session` → `db/sessions/crud.py`
-- `sync_core_agents` → `db/agents/crud.py`
-- all six importers repointed
-- each module carries a docstring recording why it is the single home
-
-> **Dropped:** `get_agent_by_id` was dead code (no importers) and identical to
-> `db/agents/crud.py::get_agent`, so it was not carried over.
-
----
-
-## 3. TLS verification disabled in production
-
-**Severity:** security
+## 1.3 TLS verification disabled in production
 
 ```python
-# transports/telegram/transport.py — before
 # Disable SSL verification for local dev to bypass Windows cert/proxy issues
 request = HTTPXRequest(httpx_kwargs={"verify": False})
 ```
 
-The comment says "local dev", but this is the only code path — it also runs on Render.
-Certificate verification was off for **every Telegram API call, including those
-carrying `TELEGRAM_BOT_TOKEN`**, leaving the bot exposed to anyone able to intercept
-the connection and present their own certificate.
+The comment says "local dev", but this was the only code path — it also ran on Render.
+Certificate verification was off for **every Telegram API call, including those carrying
+`TELEGRAM_BOT_TOKEN`**.
 
-**Fix:** verify against certifi's CA bundle, which is the actual remedy for the
-Windows failures the flag was working around (a missing or stale system trust store —
-the file already sets `SSL_CERT_FILE`/`SSL_CERT_DIR` for exactly this reason).
+Now verifies against certifi's CA bundle — the actual remedy for the Windows failures
+the flag was working around. The escape hatch survives as opt-in `TELEGRAM_INSECURE_SSL`
+and logs a warning; the old version failed open in silence, which is how it reached a
+deployed service unnoticed. Same one-liner corrected in `test_bot.py`.
 
-The escape hatch survives for genuinely broken setups (a corporate MITM proxy) but is
-now **opt-in and loud**:
+## 1.4 `.env` loading worked only by accident
 
-```python
-if os.getenv("TELEGRAM_INSECURE_SSL", "").lower() in ("1", "true", "yes"):
-    logger.warning("TLS certificate verification is DISABLED. ...")
-    verify = False
-else:
-    verify = certifi.where()
-```
+`core/router.py` built its Groq client at module scope; `main.py` called `load_dotenv()`
+**after** the import that reached it. It worked only because instantiating `Prisma()`
+calls `load_dotenv()` as a side effect — from the *cwd*, so it resolved only when
+launched from inside `backend/`.
 
-The old version failed open in silence, which is how it survived into a deployed
-service unnoticed.
+New `backend/config.py` loads `backend/.env` anchored on `__file__`, imported first by
+`main.py` and `db/client.py`. The Groq client is now built lazily, so a missing key is a
+per-request error rather than an import-time crash that took down the health endpoint
+and every CRUD route.
 
-Same one-liner corrected in `test_bot.py` — it is the script people copy when
-debugging the bot, so leaving the insecure flag there is how it grows back.
-`certifi` was added to `requirements.txt`: it is imported directly but was only
-arriving transitively via httpx.
+## 1.5 A dead database reported itself healthy
 
----
+`/api/health` returned a hardcoded `{"status": "ok"}` while startup swallowed database
+failures — so a wrong `DATABASE_URL` sailed past Render's health check and shipped green
+while every data route 500d.
 
-## 4. `.env` loading worked only by accident
-
-**Severity:** bug — latent, breaks on any import reorder
-
-`core/router.py` built its Groq client at module scope, and `AsyncGroq` raises when
-handed no key. `main.py` called `load_dotenv()` at line 19 — **after** line 14 had
-already imported that module transitively.
-
-It worked anyway for a reason nobody wrote down: `core/router.py` imports the db layer
-first, and instantiating `Prisma()` calls `load_dotenv()` as a side effect. Swapping
-two import lines, or prisma-client-py dropping that behaviour, would break local dev
-with a confusing `GroqError` at import time.
-
-A second defect hid behind the first: Prisma's incidental load passes the **relative**
-path `'.env'`, so it only resolves when the process is launched from inside
-`backend/`. Running uvicorn from the repo root silently found no `.env`.
-
-**Fix — `backend/config.py` (new, 37 lines):** loads `backend/.env` anchored on
-`__file__`, imported first by `main.py` and `db/client.py`.
-
-```python
-BACKEND_DIR = Path(__file__).resolve().parent
-load_dotenv(BACKEND_DIR / ".env", override=False)
-```
-
-`override=False` keeps Render/Vercel dashboard variables authoritative in deployment.
-Importing it from `db/client.py` also covers the standalone scripts (`test_db.py`,
-`check_msgs.py`), which have no startup hook of their own.
-
-**Fix — lazy Groq client:** the client is now built on first use via
-`get_groq_client()` and cached (it holds a connection pool). A missing key was
-previously an *import* error that took down the health endpoint, the agent CRUD routes
-and any test run — none of which need Groq. It now degrades to a per-request error
-inside handlers that already catch exceptions and surface them as the agent's reply.
+It now runs a live query and returns **503** with the diagnosis. Three deliberate calls:
+a live query rather than a boot-time flag (pooler drops and paused free tiers happen
+later); it touches the `Agent` table rather than `SELECT 1`, so a `prisma db push` that
+failed leaves a connectable database with no tables and is still caught; and startup
+stays non-fatal, because a restart loop is harder to diagnose than a process reporting
+itself unhealthy. `render.yaml` gained `healthCheckPath`.
 
 ---
 
-## 5. A dead database reported itself healthy
+# Part 2 — Semantic agent discovery (was a stub)
 
-**Severity:** deploy safety
+The README advertised pgvector semantic discovery. In fact `db/search.py` had the query
+entirely commented out, `search_agents_by_capability` returned `find_many(take=3)` —
+the first three rows, **ignoring the query** — and `generate_mock_embedding` returned
+`[0.01] * 1536`, making every agent equidistant. Nothing had ever written an embedding.
 
-```python
-# main.py — before
-@app.get("/api/health")
-async def api_health():
-    return {"status": "ok"}
-```
+**Now real**, using local ONNX embeddings (`fastembed`, `BAAI/bge-small-en-v1.5`, 384-d).
+No API key, no external embedding vendor.
 
-Startup catches database failures and continues, so the process reports
-"Application startup complete" and answers **200** while every data route 500s. A
-wrong `DATABASE_URL` therefore sailed past Render's health check and shipped, showing
-a green service that could not serve a single agent.
+- `services/embeddings/service.py` — lazy model load (never at import: a ~130MB ONNX
+  graph between `import main` and FastAPI existing would take the health endpoint down),
+  `asyncio.to_thread` plus a lock so two concurrent requests cannot each load a graph.
+- `db/agents/embeddings.py` — the sole raw-SQL boundary, because prisma-client-py cannot
+  see `Unsupported("vector")` columns. Parameterized throughout; vector and content hash
+  always written in one statement.
+- `db/search.py` — cosine `<=>` (not the original's L2 `<->`, which would silently
+  bypass the index opclass), `isActive` filtered, self excluded, and a per-token ILIKE
+  keyword fallback that tops up whenever semantic returns fewer than `limit`.
+- Content-hash dirty check so unchanged agents are not re-embedded on every boot.
+- HNSW index (`vector_cosine_ops`), not IVFFlat — no `lists` tuning, no retraining.
+- `EMBEDDINGS_ENABLED=false` degrades to keyword search rather than failing.
 
-**Fix:** the probe runs a live query and returns **503** with the diagnosis:
+**Verified working** — not just wired. Real embeddings, correct specialist ranked first:
 
-```python
-try:
-    await db.query_raw('SELECT 1 FROM "Agent" LIMIT 1')
-except Exception as e:
-    response.status_code = 503
-    return {"status": "unhealthy", "database": "not_ready",
-            "startup_error": _startup_state["db_error"], "error": str(e)}
-```
-
-Three deliberate choices:
-
-- **A live query, not a flag cached at startup.** The interesting failures happen
-  later — Supabase's pooler dropping the connection, credentials rotated, the free
-  tier pausing an idle project.
-- **It touches the `Agent` table, not a bare `SELECT 1`.** `prisma db push` can fail
-  on its own — notably when the `vector` extension is missing, which
-  `Agent.capability_embedding` needs — leaving a connectable database with no tables
-  where `SELECT 1` passes and every route still 500s. `LIMIT 1` on an empty table is a
-  hit, not a miss, so this stays true of a fresh install.
-- **Startup stays non-fatal.** Crashing would put Render into a restart loop, which is
-  harder to diagnose than a running process that reports itself unhealthy. The boot
-  error is recorded and surfaced in the 503 body instead.
-
-`render.yaml` gained `healthCheckPath: /api/health`, which is what makes a bad
-`DATABASE_URL` fail the rollout rather than go live.
+| Query | Top hit | Score |
+|---|---|---|
+| "help me lose weight and build muscle" | `sys-fitness-coach` | 0.604 |
+| "I feel anxious and overwhelmed" | `sys-therapist` | 0.493 |
+| "my laptop will not boot" | `sys-tech-support` | 0.468 |
 
 ---
 
-## Verification
+# Part 3 — Open delegation (was one hardcoded node)
 
-Deps are not installed in the working environment, so everything below ran against a
-throwaway Python 3.14 venv and a disposable PostgreSQL 18.6 cluster. Both were removed
-afterwards; the project directory and the system Postgres instance were untouched.
+`core/router.py` gated every tool on `agent.id == "sys-orchestrator"`, a string literal,
+so no other agent could ever search or delegate.
 
-### Toolchain
+Replaced with a per-tool grant driven by a new `capabilities String[]` column. Per-tool
+rather than one boolean because `transfer_to_agent` permanently retires the user's
+session — a much larger grant than `search_experts`.
 
-The project targets Python 3.10 (`render.yaml` pins `3.10.0`); the test machine runs
-3.14.7 and Node 26.8.1. No compatibility problems surfaced.
+Two traps closed in the same change:
 
-| Check | Result |
-| --- | --- |
-| `pip install -r requirements.txt` on Python 3.14.7 | clean — fastapi 0.141.1, groq 1.7.0, ptb 22.8, prisma 0.15.0 |
-| `prisma generate` (modular `prismaSchemaFolder`) | generated in 83 ms |
-| `npm ci` + `vite build` on Node 26.8.1 | 33 modules, 247 kB, 112 ms |
-| All `.py` compile | pass |
-| AST check: 26 `db.*` imports resolve post-refactor | pass |
-
-### Runtime behaviour
-
-| Scenario | Expected | Actual |
-| --- | --- | --- |
-| Healthy DB, launched from `backend/` | 200 | `{"status":"ok","database":"connected"}` |
-| DB unreachable | 503 | `not_ready` + `"All connection attempts failed"` |
-| DB reachable, schema never pushed | 503 | `` "The table `public.Agent` does not exist" `` |
-| Launched from repo root (`--app-dir`) | 200 | `.env` still resolved |
-| No `GROQ_API_KEY` anywhere | app serves | 200; `import main` succeeds — previously a hard `GroqError` |
-
-One defect was caught during this pass and corrected: the 503 body originally reported
-`"database": "unreachable"` even when the database was reachable and only the schema
-was missing — misleading in the exact endpoint meant to diagnose it. It now reports
-`not_ready`, with the `error` field distinguishing the two causes.
+- **`capabilities` is not settable through the API** — absent from `AgentCreate` /
+  `AgentUpdate`, which are `extra="forbid"`. Grants come only from committed JSON.
+- **Delegation recursion became reachable** the moment more than one agent could
+  delegate. `run_agent_headless` gained a depth cap.
 
 ---
 
-## Known gaps (untouched)
+# Part 4 — Accounts & ownership (there was no auth at all)
 
-Out of scope for this pass, but worth recording:
+Before: CORS `allow_origins=["*"]`, every browser visitor sharing one account
+(`web_user_id` defaulting to the literal `"web-user-1"`, written into
+`User.telegram_id`), every agent globally visible and deletable by anyone, and
+`GET /api/users/` + `DELETE /api/users/{id}` exposing and deleting **any** user
+unauthenticated.
 
-- **Semantic agent discovery is a stub.** The pgvector query in `db/search.py` is
-  entirely commented out; `search_agents_by_capability` returns the first 3 agents and
-  ignores the query. Nothing ever writes `capability_embedding`. The README describes
-  this as implemented.
-- **Voice is a stub.** `services/tts/service.py` and `core/pipeline/runner.py` return
-  hardcoded strings; `pipecat-ai` is a dependency but unused.
-- **No auth.** CORS is `allow_origins=["*"]` and web users are keyed into
-  `User.telegram_id` via a `web_user_id` field defaulting to `"web-user-1"`.
-- **`AgentForm.jsx` offers `gemini-1.5-flash`**, but all calls go to Groq, which does
-  not serve Gemini models — selecting it produces a runtime error.
-- **`deployment`** (extensionless) documents a stale Railway setup superseded by
-  `render.yaml`, and leaks the original author's local Windows paths.
-- **`AGENTS.md`** is referenced twice by the README but is listed in `.gitignore:76`,
-  so contributors will never receive it.
-- **No test suite.** `test_db.py`, `test_bot.py` and `check_msgs.py` are manual
-  scripts, and `.github/` contains only issue templates.
-- `npm audit` reports one high-severity advisory (`nanoid <3.3.18`, transitive via
-  Vite), fixable with `npm audit fix`.
+**Supabase Auth**, verified locally against JWKS. Branches on the token's `alg` and
+never puts HS256 and an asymmetric algorithm in one `algorithms=[]` list — the public
+key is published, so sharing a decode call invites algorithm confusion. Supports both
+asymmetric (RS256/ES256/EdDSA, default for projects since 2025-05-01) and the legacy
+HS256 secret.
+
+- `Agent` gained `owner_id`, `visibility`, `published_at`; private by default with
+  explicit publish/unpublish. The 5 core agents stay platform-owned and public.
+- `User` gained `supabase_user_id`, `email`, `is_admin`; `telegram_id` became nullable.
+- Telegram accounts link via a one-time `/link CODE` — transactional, single-use via a
+  conditional `used_at` write, rate limited, and it merges an existing anonymous
+  Telegram row rather than stranding its history.
+- `GET|DELETE /api/users/me` replace the open routes; listing is admin-gated.
+- CORS restricted to an explicit origin list with `allow_credentials=False`.
+
+### Security fixes in this part
+
+| Issue | Before | Now |
+|---|---|---|
+| **IDOR on chat sessions** | Any caller could pass any `session_id`; the route only checked the row *existed*. The full history was then loaded into the model — so a stranger could read (*"summarise our conversation"*) and write to anyone's transcript. | `session.user_id != user.id` → 404 |
+| **Private agents reachable via the orchestrator** | `core/router.py` interpolated *every* agent's name and id into the supervisor prompt, and `delegate_task`/`transfer_to_agent` ran an `agent_id` **chosen by the LLM** with no visibility check — a prompt-injected orchestrator could execute any user's private agent. | Visibility-scoped listing; LLM-supplied ids re-resolved through `get_visible_agent` |
+| **System prompts leaked** | Routes returned raw Prisma models, so `GET /api/agents/` exposed every agent's `system_prompt` — the thing the author actually built. | `AgentOut`; `system_prompt` only for its owner |
+| **Private agent existence oracle** | 403 on another user's private agent confirmed the id was real. | Resolved through the visibility filter first → 404 |
 
 ---
 
-## To run
+# Part 5 — Voice (was a stub)
 
-```bash
-cd backend/
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-prisma generate && prisma db push      # needs `create extension vector;` in Supabase
-uvicorn main:app --reload
+`services/tts/service.py` returned hardcoded strings, `core/pipeline/runner.py` returned
+`"This is a response generated by the modular Pipecat pipeline."`, and the Telegram voice
+handler replied "please send text for now". Every agent carried a `voice_type` that did
+nothing.
 
-cd ../frontend/ && npm install && npm run dev
-```
+Now real, via **Groq Whisper (STT) and Groq Orpheus (TTS)** — the same `GROQ_API_KEY` the
+chat completions already use, so voice added **no vendor, no key and no dependency**
+beyond `python-multipart` for the upload.
 
-Required: `DATABASE_URL`, `DIRECT_URL`, `GROQ_API_KEY`. `TELEGRAM_BOT_TOKEN` is
-optional — without it the bot logs an error and the API still serves.
+- Telegram: voice note → transcript echoed back (so a misrecognition is obvious) → agent
+  reply → spoken reply in that agent's voice.
+- Web: mic button in the chat, plus a 🔈 on each reply. `POST /{id}/chat/voice`
+  (multipart) and `POST /{id}/speak` (→ `audio/wav`). Speech is a separate call so
+  callers don't pay for synthesis they never play.
+- `voice_type` finally means something: `male-1`→troy, `female-1`→hannah, etc. The map
+  lives in one dict so the agent JSON stays provider-agnostic.
+- `VOICE_ENABLED=false` runs text-only.
+- `services/groq/service.py` — was a second dead stub, now the shared lazy Groq client
+  (a service importing from `core/` would invert the layering).
+
+---
+
+# Part 6 — Repo hygiene
+
+- **`.gitignore` was silently swallowing `frontend/src/lib/`.** An unanchored `lib/`
+  from the Python template matched any directory of that name at any depth, so
+  `api.js`, `supabase.js` and `voice.js` were untracked — and every page imports from
+  them, so a fresh clone would not have built. Anchored to `/lib/`.
+- Deleted the dead `core/pipeline/runner.py`; both `services/*` stubs are now real code.
+- `.env.example` for backend and frontend; README updated.
+
+---
+
+# Deploying this
+
+**Order matters — getting it wrong takes the service down, not just the feature.**
+`prisma db push` runs in the Render *start* command, so a destructive diff fails the
+boot rather than the deploy.
+
+1. Back up: `pg_dump "$DIRECT_URL" -n public -Fc -f pre.dump`
+2. Run `backend/prisma/PRE_DEPLOY.sql` — confirms pgvector is reachable and performs the
+   `vector(1536)` → `vector(384)` change by hand while the column is still all-NULL.
+3. `prisma generate && prisma db push`
+4. Run `backend/prisma/POST_DEPLOY.sql` — publishes the core agents, quarantines
+   pre-auth custom agents (they were created anonymously; there is no signal tying them
+   to a person, so they are preserved but invisible until claimed), retires `web-user-1`.
+5. Set `SUPABASE_URL`, `CORS_ORIGINS`, `GROQ_API_KEY`, `DATABASE_URL`, `DIRECT_URL`, and
+   `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` on the frontend.
+
+### Breaking changes
+
+- `ChatRequest.web_user_id` is gone; all agent write routes and chat now require a bearer
+  token.
+- `GET /api/users/` and `DELETE /api/users/{id}` are admin-only; `/me` variants added.
+- New agents default to **private**.
+
+---
+
+# Verification
+
+Run against a throwaway Python 3.14 venv and a disposable PostgreSQL 18.6 cluster.
+
+| Area | Result |
+|---|---|
+| Semantic ranking | Correct specialist first on all three probe queries (table above) |
+| Auth | No token / garbage token / expired → 401; anon `POST /api/agents/` → 401 |
+| Prompt leakage | `system_prompt` absent from anonymous `GET /api/agents/` |
+| IDOR | User B resuming A's `session_id` → 404, through both the text and voice routes |
+| Ownership ladder | Another user's private → 404; their public → 403; system → 403; own → allowed |
+| Voice guards | Empty / oversized audio, empty text, `VOICE_ENABLED=false` all degrade cleanly |
+| Degradation | pgvector absent → logged, swallowed, keyword search still serves |
+| Build | Backend compiles and imports; frontend builds (85 modules), lints clean, 0 npm vulnerabilities |
+
+### Not verified — read before merging
+
+- **The pgvector SQL path has never executed.** The test database had no pgvector, so
+  `<=>`, the `::vector` casts and the HNSW index have never run once. Embedding *quality*
+  is proven; the *query* is not.
+- **No valid Supabase token has ever been accepted.** Rejection is tested; the
+  authenticated happy path is not.
+- **No real Groq call.** No LLM reply, no Whisper transcription, no Orpheus synthesis has
+  actually round-tripped — request shapes match the SDK signatures, nothing more.
+- **Telegram `/link` has never been redeemed** against a live bot.
+- Migrations in `PRE_DEPLOY.sql` / `POST_DEPLOY.sql` have not been run anywhere.
+
+---
+
+# Known gaps (unchanged, out of scope)
+
+- No test suite and no CI. `test_db.py` / `test_bot.py` are manual scripts.
+- `pipecat-ai` remains an unused dependency (deliberately kept).
+- `switch_user_agent` deactivates *all* of a user's sessions, so two browser tabs on two
+  agents clobber each other.
+- The `deployment` file documents a stale Railway setup superseded by `render.yaml`.
+- "Millions of agents" is five.

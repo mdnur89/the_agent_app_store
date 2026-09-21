@@ -25,12 +25,17 @@ __pycache__/
 env/
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to the repo root. These come from the standard Python template,
+# where they mean a virtualenv's internals -- but unanchored they match ANY
+# directory of that name at any depth, and `lib/` was silently swallowing
+# frontend/src/lib/ (api.js, supabase.js, voice.js). Those are load-bearing:
+# every page imports from them, so a fresh clone would not even build. The
+# venv dirs themselves are already ignored wholesale further down.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -44,6 +49,8 @@ venv.bak/
 
 # Prisma
 backend/prisma/schema/*.db
+.fastembed_cache/
+backend/.fastembed_cache/
 
 # --------------------
 # Node.js (Frontend)

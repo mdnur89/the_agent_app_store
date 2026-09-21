@@ -3,7 +3,7 @@ services:
     name: the-hub-backend
     env: python
     rootDir: backend
-    buildCommand: "pip install -r requirements.txt && prisma generate"
+    buildCommand: "pip install -r requirements.txt && prisma generate && python -c \"from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5', cache_dir='.fastembed_cache', threads=1)\""
     startCommand: "prisma db push && uvicorn main:app --host 0.0.0.0 --port $PORT"
     # Gates the deploy on the database actually being reachable. /api/health
     # probes it with SELECT 1 and returns 503 when it is not, so a bad
@@ -19,5 +19,22 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
+      - key: FASTEMBED_CACHE_DIR
+        value: .fastembed_cache
+      - key: EMBEDDINGS_ENABLED
+        value: "true"
+      # Voice reuses GROQ_API_KEY; no extra credential needed.
+      - key: VOICE_ENABLED
+        value: "true"
+      - key: EMBEDDING_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
       - key: PYTHON_VERSION
         value: 3.10.0

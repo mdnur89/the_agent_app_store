@@ -9,3 +9,18 @@ prisma
 python-dotenv
 fastapi
 uvicorn
+# A bounded range rather than a hard pin. fastembed <0.5 declares
+# requires-python >=3.8,<3.13, so `pip install -r requirements.txt` failed
+# outright on 3.13+ with no fallback -- not a degraded install, a hard resolver
+# error. 0.5+ supports 3.9 through 3.14, which covers both Render's pinned
+# 3.10 and a modern local interpreter. The upper bound guards a breaking minor.
+fastembed>=0.5.0,<0.9.0
+# numpy is deliberately left to fastembed to resolve. It declares
+# python-version-conditional floors of its own (>=2.3.0 on 3.14, <2.3.0 on
+# 3.10, >=2.1.0 on 3.13), so any single hard pin here is wrong on one end of
+# that range or the other -- the previous numpy==1.26.4 broke 3.13+.
+pyjwt[crypto]>=2.10.0
+# Required by FastAPI to parse multipart/form-data, which the voice chat route
+# uses for its audio upload. FastAPI raises at import time if a route declares
+# UploadFile without it, so this is a hard runtime requirement, not an extra.
+python-multipart>=0.0.9

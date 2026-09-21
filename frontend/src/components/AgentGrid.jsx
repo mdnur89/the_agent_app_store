@@ -1,6 +1,11 @@
 import { Link } from 'react-router-dom'
+import { apiFetch } from '../lib/api'
 
-export default function AgentGrid({ agents, loading }) {
+export default function AgentGrid({ agents, loading, onChanged }) {
+  const togglePublish = async (agent) => {
+    await apiFetch(`/api/agents/${agent.id}/${agent.visibility === 'public' ? 'unpublish' : 'publish'}`, { method: 'POST' })
+    onChanged()
+  }
   return (
     <section className="grid-section">
       <h2>Active Agents</h2>
@@ -14,7 +19,7 @@ export default function AgentGrid({ agents, loading }) {
             <div key={agent.id} className={`agent-card ${agent.isActive ? 'active' : 'inactive'}`}>
               <div className="card-header">
                 <h3>{agent.name}</h3>
-                <span className="badge">{agent.llm_model}</span>
+                <span className="badge">{agent.visibility}</span>
               </div>
               <p className="card-desc">{agent.description || 'No description provided.'}</p>
               <div className="card-footer">
@@ -25,6 +30,9 @@ export default function AgentGrid({ agents, loading }) {
                 <Link to={`/chat/${agent.id}`} className="chat-link">
                   Chat Now
                 </Link>
+                {agent.is_owner && <button className="publish-btn" onClick={() => togglePublish(agent)}>
+                  {agent.visibility === 'public' ? 'Unpublish' : 'Publish'}
+                </button>}
               </div>
             </div>
           ))}

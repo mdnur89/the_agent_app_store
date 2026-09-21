@@ -1,6 +1,14 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel
 
-class UserCreate(BaseModel):
-    telegram_id: str = Field(..., description="The unique identifier from Telegram or a custom web user ID.", example="123456789")
-    username: Optional[str] = Field(None, description="The user's display name or username.", example="johndoe")
+
+class UserOut(BaseModel):
+    id: str
+    email: str | None
+    username: str | None
+    is_admin: bool
+    telegram_linked: bool
+
+
+class TelegramLinkCodeOut(BaseModel):
+    code: str
+    expires_at: str
