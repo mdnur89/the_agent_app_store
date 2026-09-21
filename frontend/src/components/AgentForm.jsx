@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { apiFetch } from '../lib/api'
 
 export default function AgentForm({ onAgentCreated }) {
   const [formData, setFormData] = useState({
@@ -16,16 +17,13 @@ export default function AgentForm({ onAgentCreated }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
-      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${baseUrl}/api/agents`, {
+      const res = await apiFetch('/api/agents/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...formData, isActive: true })
       })
-      if (res.ok) {
-        onAgentCreated()
-        setFormData({ ...formData, name: '', description: '', system_prompt: '' })
-      }
+      if (res.ok) onAgentCreated()
+      setFormData({ ...formData, name: '', description: '', system_prompt: '' })
     } catch (err) {
       console.error("Failed to create agent:", err)
     }

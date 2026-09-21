@@ -1,7 +1,12 @@
 model User {
-  id          String    @id @default(uuid())
-  telegram_id String    @unique
-  username    String?
-  createdAt   DateTime  @default(now())
-  sessions    Session[]
+  id               String             @id @default(uuid())
+  supabase_user_id String?            @unique
+  email            String?
+  telegram_id      String?            @unique
+  username         String?
+  is_admin         Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+  sessions         Session[]
+  agents           Agent[]            @relation("AgentOwner")
+  linkCodes        TelegramLinkCode[]
 }

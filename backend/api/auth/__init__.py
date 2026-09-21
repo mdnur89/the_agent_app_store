@@ -1,0 +1,1 @@
+"""Supabase JWT authentication dependencies."""

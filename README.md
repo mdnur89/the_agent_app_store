@@ -9,9 +9,13 @@ A modular, highly scalable "App Store" for AI agents. This platform allows users
 
 - **Hierarchical Swarm Architecture**: Top-level "Supervisor" agents (like the Master Orchestrator) can break down complex user requests and delegate sub-tasks to specialist agents in the background, synthesizing their responses for the user.
 - **Semantic Agent Discovery**: Utilizing Supabase `pgvector`, agents are embedded into a vector space based on their capabilities. Supervisors dynamically search the vector database to discover and recruit the exact experts they need on the fly.
+- **Private-by-default Accounts**: Supabase Auth protects agent creation and chat history. User agents remain private until their owner explicitly publishes them.
 - **Multi-Transport Interfaces**: 
   - **Web Dashboard & Chat**: A premium React dashboard to create agents and a dedicated web-chat UI to interact with them directly in the browser.
   - **Telegram Bot**: Native integration via webhooks/polling, maintaining conversation memory across transports.
+- **Voice In and Out**: Send a Telegram voice note or tap the mic in the web chat and Groq Whisper
+  transcribes it; the reply is spoken back with Groq Orpheus in the agent's configured voice.
+  Uses the existing `GROQ_API_KEY` — no extra provider. Set `VOICE_ENABLED=false` for text-only.
 - **Modular Domains**: Agents are structured logically by domain (`business`, `personal`, `system`), making it trivial to scale the ecosystem.
 
 ## 🏗 Architecture
@@ -44,6 +48,18 @@ DIRECT_URL="postgresql://postgres.[YOUR-PROJECT-REF]:[YOUR-PASSWORD]@aws-0-eu-ce
 # API Keys
 TELEGRAM_BOT_TOKEN="your_telegram_bot_token"
 GROQ_API_KEY="your_groq_api_key"
+
+# Supabase Auth and browser origin
+SUPABASE_URL="https://YOUR-PROJECT-REF.supabase.co"
+# Only needed for legacy HS256 projects; asymmetric projects use JWKS.
+SUPABASE_JWT_SECRET="your_legacy_jwt_secret"
+CORS_ORIGINS="http://localhost:5173"
+
+# Local semantic search controls
+EMBEDDINGS_ENABLED="true"
+FASTEMBED_CACHE_DIR=".fastembed_cache"
+EMBEDDING_THREADS="1"
+OMP_NUM_THREADS="1"
 ```
 
 ### 3. Backend Installation
@@ -59,7 +75,9 @@ source venv/Scripts/activate
 # Install requirements
 pip install -r requirements.txt
 
-# Generate the Prisma Client and push the schema to Supabase
+# For an existing installation, back up the database and run the reviewed
+# statements in prisma/PRE_DEPLOY.sql before pushing this schema, then run
+# prisma/POST_DEPLOY.sql to classify preserved rows.
 prisma generate
 prisma db push
 ```
@@ -69,6 +87,14 @@ prisma db push
 ```bash
 cd frontend/
 npm install
+```
+
+Create `frontend/.env.local`:
+
+```env
+VITE_API_URL="http://localhost:8000"
+VITE_SUPABASE_URL="https://YOUR-PROJECT-REF.supabase.co"
+VITE_SUPABASE_PUBLISHABLE_KEY="your_publishable_key"
 ```
 
 ---
@@ -98,21 +124,20 @@ npm run dev
 
 The project is architected to run across a split-deployment model for optimal performance: the Frontend on a static CDN, and the Backend on a robust containerized platform to support the always-on Telegram polling.
 
-### 1. Deploying the Backend (Render - Free Tier)
-We recommend [Render](https://render.com/) for the FastAPI backend as they offer a completely free tier.
+### 1. Deploying the Backend
+The checked-in Render blueprint is a starting point, but local ONNX embeddings add roughly 300–400 MB RSS above FastAPI and Prisma. Use a host with adequate memory, or set `EMBEDDINGS_ENABLED=false` to retain keyword discovery without loading the model.
 1. Create a new account on Render and connect your GitHub repository.
 2. Go to **Blueprints** and create a New Blueprint Instance using the `render.yaml` file in this repo.
 3. Render will automatically detect the configuration, run `prisma generate`, and start the `uvicorn` server.
-4. **Environment Variables**: Add your `DATABASE_URL`, `DIRECT_URL`, `TELEGRAM_BOT_TOKEN`, and `GROQ_API_KEY` in the Render dashboard under the service settings.
+4. **Environment Variables**: Add the database/API variables plus `SUPABASE_URL`, the production `CORS_ORIGINS`, and (legacy projects only) `SUPABASE_JWT_SECRET`.
 5. Copy the generated Render URL (e.g., `https://your-app.onrender.com`).
-*Note: Render's free tier spins down after 15 minutes of inactivity. Simply opening your frontend Dashboard will instantly wake it back up.*
 
 ### 2. Deploying the Frontend (Vercel - Free Tier)
 Deploy the React application to [Vercel](https://vercel.com/) for lightning-fast, free static hosting.
 1. Import your GitHub repository into Vercel.
 2. Set the Root Directory to `frontend`.
 3. Set the Build Command to `npm run build` and Output Directory to `dist`.
-4. **Environment Variables**: Add `VITE_API_URL` and set it to your Render backend URL (e.g., `https://your-app.onrender.com`).
+4. **Environment Variables**: Add `VITE_API_URL`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_PUBLISHABLE_KEY`.
 5. Vercel will use the provided `vercel.json` to handle React Router SPA routing seamlessly.
 
 ---

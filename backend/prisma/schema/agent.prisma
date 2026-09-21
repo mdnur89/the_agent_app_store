@@ -1,14 +1,23 @@
 model Agent {
-  id            String    @id @default(uuid())
-  name          String
-  description   String?
-  system_prompt String
-  voice_type    String?   @default("default")
-  llm_model     String    @default("llama-3.1-8b-instant")
-  isActive      Boolean   @default(true)
-  is_system     Boolean   @default(false)
-  category      String    @default("general")
-  capability_embedding Unsupported("vector(1536)")?
-  createdAt     DateTime  @default(now())
-  sessions      Session[]
+  id                     String    @id @default(uuid())
+  name                   String
+  description            String?
+  system_prompt          String
+  voice_type             String?   @default("default")
+  llm_model              String    @default("llama-3.1-8b-instant")
+  isActive               Boolean   @default(true)
+  is_system              Boolean   @default(false)
+  category               String    @default("general")
+  capabilities           String[]  @default([])
+  capability_embedding   Unsupported("vector(384)")?
+  capability_hash        String?
+  owner_id               String?
+  visibility             String    @default("private")
+  published_at           DateTime?
+  createdAt              DateTime  @default(now())
+  owner                  User?     @relation("AgentOwner", fields: [owner_id], references: [id], onDelete: Cascade)
+  sessions               Session[]
+
+  @@index([owner_id])
+  @@index([visibility, isActive])
 }

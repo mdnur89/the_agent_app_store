@@ -1,0 +1,10 @@
+model TelegramLinkCode {
+  id         String    @id @default(uuid())
+  code       String    @unique
+  user_id    String
+  expires_at DateTime
+  used_at    DateTime?
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, expires_at])
+}

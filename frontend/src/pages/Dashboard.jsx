@@ -4,10 +4,7 @@ import Header from '../components/Header'
 import AgentForm from '../components/AgentForm'
 import AgentGrid from '../components/AgentGrid'
 import '../App.css'
-
-const API_URL = import.meta.env.VITE_API_URL 
-  ? `${import.meta.env.VITE_API_URL}/api/agents` 
-  : 'http://localhost:8000/api/agents'
+import { apiFetch } from '../lib/api'
 
 export default function Dashboard() {
   const [agents, setAgents] = useState([])
@@ -35,7 +32,7 @@ export default function Dashboard() {
 
   const fetchAgents = async () => {
     try {
-      const res = await fetch(API_URL)
+      const res = await apiFetch('/api/agents/')
       const data = await res.json()
       setAgents(data)
     } catch (err) {
@@ -155,7 +152,7 @@ export default function Dashboard() {
 
       <main className="dashboard-layout">
         <AgentForm onAgentCreated={fetchAgents} />
-        <AgentGrid agents={customAgents} loading={loading} />
+        <AgentGrid agents={customAgents} loading={loading} onChanged={fetchAgents} />
       </main>
     </div>
   )

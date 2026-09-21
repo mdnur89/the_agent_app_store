@@ -22,6 +22,15 @@
   font-size: 32px;
 }
 
+.account-nav { display: flex; align-items: center; gap: 12px; margin-left: auto; font-size: 14px; }
+.account-nav a { color: var(--text-h); text-decoration: none; }
+.account-nav button, .publish-btn, .settings-row button { border: 1px solid var(--border); border-radius: 7px; padding: 8px 12px; background: var(--code-bg); color: var(--text-h); cursor: pointer; }
+.publish-btn { margin-left: 8px; }
+.settings-card { max-width: 720px; width: 100%; box-sizing: border-box; margin: 0 auto; padding: 28px; border: 1px solid var(--border); border-radius: 14px; background: var(--code-bg); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.link-code { margin-top: 20px; padding: 18px; border-radius: 10px; background: var(--bg); }
+.link-code strong { font: 700 30px var(--mono); letter-spacing: .12em; color: var(--text-h); }
+
 .dashboard-layout {
   display: grid;
   grid-template-columns: 1fr 2fr;

@@ -6,5 +6,6 @@
   "voice_type": "female-1",
   "llm_model": "llama-3.3-70b-versatile",
   "is_system": true,
-  "isActive": true
+  "isActive": true,
+  "capabilities": ["search_experts", "delegate_task", "transfer_to_agent"]
 }

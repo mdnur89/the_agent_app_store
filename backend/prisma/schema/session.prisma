@@ -4,7 +4,7 @@ model Session {
   agent_id  String
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
-  user      User      @relation(fields: [user_id], references: [id])
-  agent     Agent     @relation(fields: [agent_id], references: [id])
+  user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  agent     Agent     @relation(fields: [agent_id], references: [id], onDelete: Cascade)
   messages  Message[]
 }

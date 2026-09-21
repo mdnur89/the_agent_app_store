@@ -5,6 +5,7 @@ import config  # noqa: F401  (imported for its import-time side effect)
 
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,10 +46,14 @@ app = FastAPI(
 # Add CORS middleware for the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+        if origin.strip()
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(agents_router, prefix="/api/agents", tags=["Agents"])
@@ -57,7 +62,22 @@ app.include_router(users_router, prefix="/api/users", tags=["Users"])
 # Populated by startup_event and read by /api/health. A dict rather than a
 # module-level `None` so the health handler sees mutations without a global
 # declaration, and so more probe state can be added without reworking it.
-_startup_state: dict[str, str | None] = {"db_error": "startup has not run yet"}
+_startup_state: dict[str, str | None] = {
+    "db_error": "startup has not run yet",
+    "embeddings_error": None,
+}
+
+
+async def _init_embeddings() -> None:
+    try:
+        from db.agents.embeddings import backfill_embeddings, ensure_vector_schema
+
+        await ensure_vector_schema()
+        await backfill_embeddings()
+        _startup_state["embeddings_error"] = None
+    except Exception as exc:
+        logger.exception("Embedding initialization failed; keyword search remains available")
+        _startup_state["embeddings_error"] = str(exc)
 
 
 @app.on_event("startup")
@@ -104,7 +124,15 @@ async def startup_event():
         logger.error(f"Failed to connect or sync DB: {e}")
         _startup_state["db_error"] = str(e)
 
+    asyncio.create_task(_init_embeddings())
     asyncio.create_task(start_telegram_bot())
+
+    try:
+        from api.auth.dependencies import prefetch_jwks
+
+        await prefetch_jwks()
+    except Exception as exc:
+        logger.warning("Supabase JWKS prefetch failed (will retry on authenticated request): %s", exc)
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -158,7 +186,11 @@ async def api_health(response: Response):
             "error": str(e),
         }
 
-    return {"status": "ok", "database": "connected"}
+    return {
+        "status": "ok",
+        "database": "connected",
+        "embeddings": _startup_state["embeddings_error"] or "ok",
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
